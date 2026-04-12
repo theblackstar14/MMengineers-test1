@@ -8,14 +8,16 @@ import {
 } from '@/lib/queries/proyectos'
 import { ProyectoTabs } from '@/components/proyectos/detalle/ProyectoTabs'
 import { ResumenTab } from '@/components/proyectos/detalle/ResumenTab'
+import { CotizacionesView } from '@/components/proyectos/detalle/CotizacionesView'
 import {
   formatSoles, formatFecha,
   getColorEstadoProyecto, getLabelEstadoProyecto, getLabelTipoProyecto, cn,
 } from '@/lib/utils'
 import {
-  ChevronRight, Pencil, CalendarDays,
-  TrendingUp, Clock, CheckSquare, DollarSign, FileText,
+  ChevronRight, Pencil, CheckSquare, DollarSign, FileText,
 } from 'lucide-react'
+import type { Valorizacion, Movimiento, HitoProyecto } from '@/lib/types/database'
+import { getColorEstadoValorizacion } from '@/lib/utils'
 
 interface PageProps {
   params: Promise<{ id: string }>
@@ -35,7 +37,6 @@ export default async function ProyectoDetallePage({ params, searchParams }: Page
   const proyecto = await getProyectoById(id)
   if (!proyecto) notFound()
 
-  // Carga paralela según tab activo
   const [hitos, curvaS, equipo, valorizaciones, garantias, movimientos, cotizaciones, documentos] =
     await Promise.all([
       getHitosProyecto(id),
@@ -54,102 +55,78 @@ export default async function ProyectoDetallePage({ params, searchParams }: Page
   const hitosCompletados = hitos.filter(h => h.estado === 'completado').length
   const avanceColor = avance >= 70 ? '#22C55E' : avance >= 40 ? '#EAB308' : '#EF4444'
 
+  // Tab label for breadcrumb
+  const TAB_LABELS: Record<string, string> = {
+    resumen: 'Resumen', cotizacion: 'Cotizaciones', valorizacion: 'Valorizaciones',
+    finanzas: 'Finanzas', documentos: 'Documentos', progreso: 'Progreso',
+  }
+
+  // Fin estimado short label
+  const finLabel = p.fecha_fin_contractual
+    ? new Date(p.fecha_fin_contractual + 'T00:00:00')
+        .toLocaleDateString('es-PE', { month: 'short', year: 'numeric' })
+        .replace(/^\w/, c => c.toUpperCase())
+    : '—'
+
   return (
-    <div className="space-y-4 animate-fade-in">
+    <div className="space-y-0 animate-fade-in">
 
       {/* ── Breadcrumb ── */}
-      <div className="flex items-center gap-1.5 text-sm text-gray-500">
+      <div className="flex items-center gap-1 text-[12px] text-gray-500 mb-3">
         <Link href="/proyectos" className="hover:text-gray-300 transition-colors">Proyectos</Link>
-        <ChevronRight size={14} />
-        <span className="text-gray-300 font-medium">{p.nombre}</span>
+        <ChevronRight size={13} />
+        <Link href={`/proyectos/${id}`} className="hover:text-gray-300 transition-colors">
+          {p.nombre}
+        </Link>
+        {tab !== 'resumen' && (
+          <>
+            <ChevronRight size={13} />
+            <span className="text-gray-300">{TAB_LABELS[tab] ?? tab}</span>
+          </>
+        )}
       </div>
 
-      {/* ── Header ── */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="text-2xl font-bold text-white">{p.nombre}</h1>
-            <span className={cn('erp-badge text-sm', getColorEstadoProyecto(p.estado))}>
-              {getLabelEstadoProyecto(p.estado)}
-            </span>
+      {/* ── Header bar ── */}
+      <div
+        className="flex items-center justify-between gap-4 rounded-xl border px-5 py-3 mb-4"
+        style={{ backgroundColor: '#161B2E', borderColor: '#1E293B' }}
+      >
+        {/* Left: name + meta + badge */}
+        <div className="flex items-center gap-4 min-w-0">
+          <div className="min-w-0">
+            <h1 className="text-[18px] font-bold text-white leading-tight truncate">{p.nombre}</h1>
+            <p className="text-[11px] text-gray-500 mt-0.5">
+              {p.entidad_contratante ?? '—'}
+              {p.numero_contrato ? ` · Contrato N° ${p.numero_contrato}` : ''}
+              {p.ubicacion ? ` · ${p.ubicacion}` : ''}
+            </p>
           </div>
-          <p className="text-sm text-gray-500 mt-1">
-            {p.codigo} · {getLabelTipoProyecto(p.tipo)}
-            {p.entidad_contratante && ` · ${p.entidad_contratante}`}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button className="erp-btn-secondary">
-            <Pencil size={13} />
-            Editar
-          </button>
-        </div>
-      </div>
-
-      {/* ── Barra de métricas horizontal ── */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
-        {/* Monto contrato */}
-        <div className="erp-card md:col-span-2">
-          <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Monto contrato</p>
-          <p className="text-xl font-bold text-white">{formatSoles(montoTotal, true)}</p>
-          {p.monto_adicionales > 0 && (
-            <p className="text-xs text-yellow-500 mt-0.5">+{formatSoles(p.monto_adicionales, true)} adic.</p>
-          )}
+          <span className={cn('shrink-0 inline-block px-3 py-1 rounded-full text-[11px] font-semibold', getColorEstadoProyecto(p.estado))}>
+            {getLabelEstadoProyecto(p.estado)}
+          </span>
         </div>
 
-        {/* Valorizado */}
-        <div className="erp-card">
-          <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Valorizado</p>
-          <p className="text-xl font-bold text-blue-400">{formatSoles(p.monto_valorizado ?? 0, true)}</p>
-        </div>
-
-        {/* Avance */}
-        <div className="erp-card">
-          <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Avance</p>
-          <div className="flex items-end gap-1.5">
-            <p className="text-xl font-bold" style={{ color: avanceColor }}>{avance.toFixed(0)}%</p>
-            <p className="text-xs text-gray-500 mb-0.5">físico</p>
-          </div>
-          <div className="erp-progress mt-1.5">
-            <div className="erp-progress-bar" style={{ width: `${avance}%`, backgroundColor: avanceColor }} />
-          </div>
-        </div>
-
-        {/* Días restantes */}
-        <div className="erp-card">
-          <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Días restantes</p>
-          <p className={cn('text-xl font-bold',
-            (p.dias_restantes ?? 0) < 30 ? 'text-red-400' :
-            (p.dias_restantes ?? 0) < 90 ? 'text-yellow-400' : 'text-white'
-          )}>
-            {p.dias_restantes ?? '—'}
-          </p>
-          {p.fecha_fin_contractual && (
-            <p className="text-xs text-gray-600 mt-0.5">{formatFecha(p.fecha_fin_contractual)}</p>
-          )}
-        </div>
-
-        {/* Hitos */}
-        <div className="erp-card">
-          <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Hitos</p>
-          <p className="text-xl font-bold text-white">
-            {hitosCompletados}
-            <span className="text-gray-600 text-base font-normal">/{hitos.length}</span>
-          </p>
-        </div>
-
-        {/* Cobrado */}
-        <div className="erp-card">
-          <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Cobrado</p>
-          <p className="text-xl font-bold text-green-400">{formatSoles(p.monto_cobrado ?? 0, true)}</p>
+        {/* Right: KPI boxes */}
+        <div className="flex items-stretch divide-x shrink-0" style={{ borderColor: '#1E293B' }}>
+          {[
+            { label: 'Presupuesto', value: formatSoles(montoTotal, true), color: 'text-white' },
+            { label: 'Ejecutado',   value: formatSoles(p.monto_valorizado ?? 0, true), color: 'text-white' },
+            { label: 'Avance',      value: `${avance.toFixed(0)}%`, color: avanceColor },
+            { label: 'Fin estimado',value: finLabel, color: 'text-white' },
+          ].map(kpi => (
+            <div key={kpi.label} className="px-4 text-right">
+              <p className="text-[10px] text-gray-500 uppercase tracking-wider">{kpi.label}</p>
+              <p className="text-[15px] font-bold" style={{ color: kpi.color }}>{kpi.value}</p>
+            </div>
+          ))}
         </div>
       </div>
 
       {/* ── Tabs ── */}
       <ProyectoTabs proyectoId={id} tabActivo={tab} />
 
-      {/* ── Contenido del tab ── */}
-      <div className="mt-0">
+      {/* ── Tab content ── */}
+      <div className="mt-4">
         {tab === 'resumen' && (
           <ResumenTab
             proyecto={p}
@@ -162,7 +139,11 @@ export default async function ProyectoDetallePage({ params, searchParams }: Page
         )}
 
         {tab === 'cotizacion' && (
-          <CotizacionTab cotizaciones={cotizaciones} proyectoId={id} />
+          <CotizacionesView
+            cotizacionesDB={cotizaciones as Parameters<typeof CotizacionesView>[0]['cotizacionesDB']}
+            proyectoId={id}
+            proyectoNombre={p.nombre}
+          />
         )}
 
         {tab === 'valorizacion' && (
@@ -185,32 +166,7 @@ export default async function ProyectoDetallePage({ params, searchParams }: Page
   )
 }
 
-// ─────────────────────────────────────────
-// Tabs inline (simples por ahora)
-// ─────────────────────────────────────────
-
-function CotizacionTab({ cotizaciones, proyectoId }: { cotizaciones: unknown[]; proyectoId: string }) {
-  if (cotizaciones.length === 0) {
-    return (
-      <div className="erp-card flex flex-col items-center justify-center py-16 text-gray-600">
-        <DollarSign size={36} className="mb-3 opacity-30" />
-        <p className="text-base font-medium">Sin cotizaciones</p>
-        <Link href={`/proyectos/${proyectoId}/cotizacion/nueva`}
-          className="erp-btn-primary mt-4 text-sm">
-          Crear cotización
-        </Link>
-      </div>
-    )
-  }
-  return (
-    <div className="erp-card">
-      <p className="text-sm text-gray-400">Cotizaciones disponibles: {cotizaciones.length}</p>
-    </div>
-  )
-}
-
-import type { Valorizacion } from '@/lib/types/database'
-import { getColorEstadoValorizacion } from '@/lib/utils'
+// ─── ValorizacionTab ──────────────────────────────────────────────
 
 function ValorizacionTab({ valorizaciones }: { valorizaciones: Valorizacion[] }) {
   if (valorizaciones.length === 0) {
@@ -228,7 +184,6 @@ function ValorizacionTab({ valorizaciones }: { valorizaciones: Valorizacion[] })
 
   return (
     <div className="space-y-4">
-      {/* Totales */}
       <div className="grid grid-cols-3 gap-3">
         {[
           { label: 'Total bruto', value: formatSoles(totalBruto), color: 'text-white' },
@@ -241,19 +196,12 @@ function ValorizacionTab({ valorizaciones }: { valorizaciones: Valorizacion[] })
           </div>
         ))}
       </div>
-
-      {/* Tabla */}
       <div className="erp-card overflow-x-auto">
         <table className="erp-table">
           <thead>
             <tr>
-              <th>N°</th>
-              <th>Período</th>
-              <th>Monto bruto</th>
-              <th>Retención 5%</th>
-              <th>Monto neto</th>
-              <th>Estado</th>
-              <th>Fecha cobro</th>
+              <th>N°</th><th>Período</th><th>Monto bruto</th>
+              <th>Retención 5%</th><th>Monto neto</th><th>Estado</th><th>Fecha cobro</th>
             </tr>
           </thead>
           <tbody>
@@ -261,7 +209,7 @@ function ValorizacionTab({ valorizaciones }: { valorizaciones: Valorizacion[] })
               <tr key={v.id}>
                 <td><span className="font-mono text-gray-400">Val. #{v.numero}</span></td>
                 <td className="text-gray-300">
-                  {formatFecha(v.periodo_inicio, 'short')} — {formatFecha(v.periodo_fin, 'short')}
+                  {formatFecha(v.periodo_inicio)} — {formatFecha(v.periodo_fin)}
                 </td>
                 <td className="text-white font-medium">{formatSoles(v.monto_bruto)}</td>
                 <td className="text-yellow-400">-{formatSoles(v.retencion_5pct)}</td>
@@ -281,7 +229,7 @@ function ValorizacionTab({ valorizaciones }: { valorizaciones: Valorizacion[] })
   )
 }
 
-import type { Movimiento } from '@/lib/types/database'
+// ─── FinanzasTab ──────────────────────────────────────────────────
 
 function FinanzasTab({ movimientos }: { movimientos: Movimiento[] }) {
   const ingresos = movimientos.filter(m => m.tipo === 'ingreso').reduce((s, m) => s + m.monto_neto, 0)
@@ -335,11 +283,14 @@ function FinanzasTab({ movimientos }: { movimientos: Movimiento[] }) {
   )
 }
 
-function DocumentosTab({ documentos }: { documentos: Array<{ id: string; nombre: string; tipo_documento: string | null; created_at: string; url?: string }> }) {
+// ─── DocumentosTab ────────────────────────────────────────────────
+
+function DocumentosTab({ documentos }: { documentos: Array<{ id: string; nombre: string; tipo_documento: string | null; created_at: string }> }) {
   return (
     <div className="erp-card">
       {documentos.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-gray-600">
+          <FileText size={36} className="mb-3 opacity-30" />
           <p>Sin documentos adjuntos</p>
         </div>
       ) : (
@@ -360,6 +311,8 @@ function DocumentosTab({ documentos }: { documentos: Array<{ id: string; nombre:
     </div>
   )
 }
+
+// ─── ProgresoTab ──────────────────────────────────────────────────
 
 import type { ProyectoResumen as PR } from '@/lib/types/database'
 
@@ -382,19 +335,14 @@ function ProgresoTab({ hitos, proyecto }: { hitos: HitoProyecto[]; proyecto: PR 
                 <div className="flex-1">
                   <p className="text-sm font-medium text-white">{h.nombre}</p>
                   <div className="flex gap-4 mt-0.5">
-                    {h.fecha_estimada && (
-                      <p className="text-xs text-gray-500">Estimado: {formatFecha(h.fecha_estimada)}</p>
-                    )}
-                    {h.fecha_real && (
-                      <p className="text-xs text-green-500">Real: {formatFecha(h.fecha_real)}</p>
-                    )}
+                    {h.fecha_estimada && <p className="text-xs text-gray-500">Estimado: {formatFecha(h.fecha_estimada)}</p>}
+                    {h.fecha_real && <p className="text-xs text-green-500">Real: {formatFecha(h.fecha_real)}</p>}
                   </div>
                 </div>
                 <span className={cn('erp-badge text-xs',
                   h.estado === 'completado' ? 'text-green-400 bg-green-400/10' :
                   h.estado === 'en_proceso' ? 'text-yellow-400 bg-yellow-400/10' :
-                  h.estado === 'retrasado' ? 'text-red-400 bg-red-400/10' :
-                  'text-gray-500 bg-gray-500/10'
+                  h.estado === 'retrasado' ? 'text-red-400 bg-red-400/10' : 'text-gray-500 bg-gray-500/10'
                 )}>
                   {h.estado.replace('_', ' ')}
                 </span>
@@ -423,5 +371,3 @@ function ProgresoTab({ hitos, proyecto }: { hitos: HitoProyecto[]; proyecto: PR 
     </div>
   )
 }
-
-import type { HitoProyecto } from '@/lib/types/database'
