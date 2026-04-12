@@ -1,135 +1,131 @@
 import Link from 'next/link'
-import {
-  formatSoles, formatFecha,
-  getColorEstadoProyecto, getLabelEstadoProyecto, getLabelTipoProyecto,
-  cn
-} from '@/lib/utils'
-import type { ProyectoResumen } from '@/lib/types/database'
-import { ArrowRight, MapPin } from 'lucide-react'
+import { formatSoles, formatFecha } from '@/lib/utils'
 
-interface Props {
-  proyectos: ProyectoResumen[]
+// Simplified row type — page maps DB data to this
+export type ProyectoRow = {
+  id: string
+  nombre: string
+  entidad_contratante?: string | null
+  avance_fisico_pct: number
+  monto_contrato: number
+  monto_adicionales: number
+  monto_valorizado?: number
+  fecha_fin_contractual?: string | null
+  estado: string
 }
 
-export function ProyectosActivosTable({ proyectos }: Props) {
+const BADGE: Record<string, { label: string; style: string }> = {
+  en_ejecucion:   { label: 'En ejecución', style: 'bg-amber-900/40 text-amber-400 border border-amber-700/30' },
+  adjudicado:     { label: 'Por concluir', style: 'bg-green-900/40 text-green-400' },
+  en_licitacion:  { label: 'Licitación',   style: 'bg-yellow-900/40 text-yellow-400' },
+  paralizado:     { label: 'En riesgo',    style: 'bg-red-900/40 text-red-400' },
+  en_liquidacion: { label: 'Liquidación',  style: 'bg-orange-900/40 text-orange-400' },
+  liquidado:      { label: 'Completado',   style: 'bg-slate-700 text-gray-400' },
+  cerrado:        { label: 'Cerrado',      style: 'bg-slate-800 text-gray-500' },
+}
+
+function barColor(avance: number): string {
+  if (avance >= 80) return '#22C55E'
+  if (avance >= 40) return '#EAB308'
+  return '#EF4444'
+}
+
+export function ProyectosActivosTable({ proyectos }: { proyectos: ProyectoRow[] }) {
   if (proyectos.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 text-gray-600">
-        <span className="text-sm">Sin proyectos activos</span>
+      <div className="flex items-center justify-center py-10 text-gray-600 text-sm">
+        Sin proyectos activos
       </div>
     )
   }
 
   return (
     <div className="overflow-x-auto">
-      <table className="erp-table">
+      <table className="w-full text-sm">
         <thead>
-          <tr>
-            <th>Proyecto</th>
-            <th>Tipo</th>
-            <th>Avance</th>
-            <th>Monto contrato</th>
-            <th>Fin contractual</th>
-            <th>Estado</th>
-            <th></th>
+          <tr style={{ borderBottom: '1px solid #1E293B' }}>
+            {['PROYECTO', 'CLIENTE', 'AVANCE', 'PRESUPUESTO', 'EJECUTADO', 'FECHA FIN', 'ESTADO'].map(h => (
+              <th
+                key={h}
+                className="pb-2 text-left text-[10px] font-semibold text-gray-500 uppercase tracking-wider pr-4 whitespace-nowrap"
+              >
+                {h}
+              </th>
+            ))}
           </tr>
         </thead>
-        <tbody>
+        <tbody className="divide-y" style={{ borderColor: '#1E293B' }}>
           {proyectos.map(p => {
-            const avance = p.avance_fisico_pct
-            const barColor = avance >= 70
-              ? '#22C55E'
-              : avance >= 40
-              ? '#EAB308'
-              : '#EF4444'
-
+            const avance = p.avance_fisico_pct ?? 0
+            const presupuesto = (p.monto_contrato ?? 0) + (p.monto_adicionales ?? 0)
+            const badge = BADGE[p.estado] ?? { label: p.estado, style: 'bg-slate-700 text-gray-400' }
             return (
-              <tr key={p.id}>
-                {/* Nombre */}
-                <td>
-                  <div className="font-medium text-white text-sm truncate max-w-[200px]">
+              <tr key={p.id} className="group hover:bg-white/[0.02] transition-colors">
+                {/* Proyecto */}
+                <td className="py-3 pr-4">
+                  <div className="font-medium text-white text-[13px] truncate max-w-[160px]">
                     {p.nombre}
-                  </div>
-                  <div className="flex items-center gap-1 mt-0.5 text-xs text-gray-600">
-                    <span className="font-mono">{p.codigo}</span>
-                    {p.ubicacion && (
-                      <>
-                        <span>·</span>
-                        <MapPin size={10} />
-                        <span className="truncate max-w-[120px]">{p.ubicacion}</span>
-                      </>
-                    )}
                   </div>
                 </td>
 
-                {/* Tipo */}
-                <td>
-                  <span className="text-xs text-gray-500">
-                    {getLabelTipoProyecto(p.tipo)}
+                {/* Cliente */}
+                <td className="py-3 pr-4">
+                  <span className="text-[12px] text-gray-400 whitespace-nowrap">
+                    {p.entidad_contratante ?? '—'}
                   </span>
                 </td>
 
                 {/* Avance */}
-                <td>
-                  <div className="w-28">
-                    <div className="flex justify-between text-xs mb-1">
-                      <span className="text-gray-400">{avance.toFixed(0)}%</span>
-                      <span className="text-gray-600">{p.avance_financiero_pct.toFixed(0)}% fin.</span>
-                    </div>
-                    <div className="erp-progress">
+                <td className="py-3 pr-4">
+                  <div className="flex items-center gap-2 min-w-[90px]">
+                    <div
+                      className="w-14 h-1.5 rounded-full overflow-hidden"
+                      style={{ backgroundColor: '#1E293B' }}
+                    >
                       <div
-                        className="erp-progress-bar"
-                        style={{ width: `${avance}%`, backgroundColor: barColor }}
+                        className="h-full rounded-full transition-all"
+                        style={{ width: `${Math.min(avance, 100)}%`, backgroundColor: barColor(avance) }}
                       />
                     </div>
+                    <span
+                      className="text-[12px] font-semibold whitespace-nowrap"
+                      style={{ color: barColor(avance) }}
+                    >
+                      {avance.toFixed(0)}%
+                    </span>
                   </div>
                 </td>
 
-                {/* Monto */}
-                <td>
-                  <div className="text-sm font-medium text-white">
-                    {formatSoles(p.monto_contrato + p.monto_adicionales, true)}
-                  </div>
-                  {p.monto_adicionales > 0 && (
-                    <div className="text-xs text-yellow-600 mt-0.5">
-                      +{formatSoles(p.monto_adicionales, true)} adicionales
-                    </div>
-                  )}
-                </td>
-
-                {/* Fecha fin */}
-                <td>
-                  <div className="text-sm text-gray-300">
-                    {formatFecha(p.fecha_fin_contractual)}
-                  </div>
-                  {p.dias_restantes !== null && (
-                    <div className={cn(
-                      'text-xs mt-0.5',
-                      p.dias_restantes < 30 ? 'text-red-400' :
-                      p.dias_restantes < 90 ? 'text-yellow-400' : 'text-gray-600'
-                    )}>
-                      {p.dias_restantes > 0
-                        ? `${p.dias_restantes} días restantes`
-                        : 'Vencido'}
-                    </div>
-                  )}
-                </td>
-
-                {/* Estado */}
-                <td>
-                  <span className={cn('erp-badge text-xs', getColorEstadoProyecto(p.estado))}>
-                    {getLabelEstadoProyecto(p.estado)}
+                {/* Presupuesto */}
+                <td className="py-3 pr-4">
+                  <span className="text-[12px] text-gray-200 whitespace-nowrap font-medium">
+                    {formatSoles(presupuesto, true)}
                   </span>
                 </td>
 
-                {/* Acción */}
-                <td>
-                  <Link
-                    href={`/proyectos/${p.id}`}
-                    className="text-gray-600 hover:text-yellow-400 transition-colors"
-                  >
-                    <ArrowRight size={15} />
-                  </Link>
+                {/* Ejecutado */}
+                <td className="py-3 pr-4">
+                  <span className="text-[12px] text-gray-400 whitespace-nowrap">
+                    {p.monto_valorizado != null ? formatSoles(p.monto_valorizado, true) : '—'}
+                  </span>
+                </td>
+
+                {/* Fecha fin */}
+                <td className="py-3 pr-4">
+                  <span className="text-[12px] text-gray-400 whitespace-nowrap">
+                    {p.fecha_fin_contractual
+                      ? new Date(p.fecha_fin_contractual + 'T00:00:00')
+                          .toLocaleDateString('es-PE', { month: 'short', year: 'numeric' })
+                          .replace(/^\w/, c => c.toUpperCase())
+                      : '—'}
+                  </span>
+                </td>
+
+                {/* Estado */}
+                <td className="py-3">
+                  <span className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold whitespace-nowrap ${badge.style}`}>
+                    {badge.label}
+                  </span>
                 </td>
               </tr>
             )

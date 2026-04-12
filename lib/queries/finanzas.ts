@@ -76,7 +76,7 @@ export async function getValorizacionesActivas() {
     .not('estado', 'in', '("anulada")')
     .order('created_at', { ascending: false })
     .limit(8)
-  return (data ?? []) as Array<{
+  return (data ?? []) as unknown as Array<{
     id: string
     numero: number
     estado: string
@@ -103,7 +103,7 @@ export async function getGarantiasActivas() {
     .in('estado', ['vigente', 'por_vencer'])
     .order('fecha_vencimiento', { ascending: true })
     .limit(10)
-  return (data ?? []) as Array<{
+  return (data ?? []) as unknown as Array<{
     id: string
     tipo: string
     banco: string
@@ -145,7 +145,7 @@ export async function getCuentasPorCobrar() {
     .in('estado', ['pendiente', 'en_proceso'])
     .order('fecha_vencimiento', { ascending: true })
     .limit(6)
-  return (data ?? []) as Array<{
+  return (data ?? []) as unknown as Array<{
     id: string
     descripcion: string
     monto_neto: number
@@ -170,7 +170,7 @@ export async function getCuentasPorPagar() {
     .in('estado', ['pendiente', 'en_proceso'])
     .order('fecha_vencimiento', { ascending: true })
     .limit(6)
-  return (data ?? []) as Array<{
+  return (data ?? []) as unknown as Array<{
     id: string
     descripcion: string
     monto_neto: number
@@ -205,7 +205,7 @@ export async function getMovimientosMes(mes: string) {
     .order('fecha', { ascending: false })
     .limit(60)
 
-  return (data ?? []) as Array<{
+  return (data ?? []) as unknown as Array<{
     id: string
     tipo: string
     tipo_comprobante: string

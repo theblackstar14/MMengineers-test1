@@ -1,73 +1,67 @@
 import { cn } from '@/lib/utils'
-import { TrendingUp, TrendingDown, Minus } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
 interface KpiCardProps {
   label: string
   value: string
   sublabel?: string
-  delta?: number        // porcentaje de cambio (ej: +12.5)
-  deltaLabel?: string   // texto del delta (ej: "vs mes anterior")
+  delta?: string        // e.g. "+12%"
+  deltaLabel?: string   // e.g. "vs mes anterior"
+  deltaPositive?: boolean
   icon?: LucideIcon
-  color?: 'gold' | 'green' | 'blue' | 'red' | 'purple'
+  color?: 'gold' | 'green' | 'blue' | 'orange' | 'purple'
   className?: string
 }
 
 const COLOR_MAP = {
-  gold:   { dot: 'bg-yellow-500',  text: 'text-yellow-400',  bg: 'bg-yellow-500/10' },
-  green:  { dot: 'bg-green-500',   text: 'text-green-400',   bg: 'bg-green-500/10' },
-  blue:   { dot: 'bg-blue-500',    text: 'text-blue-400',    bg: 'bg-blue-500/10' },
-  red:    { dot: 'bg-red-500',     text: 'text-red-400',     bg: 'bg-red-500/10' },
-  purple: { dot: 'bg-purple-500',  text: 'text-purple-400',  bg: 'bg-purple-500/10' },
+  gold:   { bg: 'bg-yellow-500/15', text: 'text-yellow-400' },
+  green:  { bg: 'bg-green-500/15',  text: 'text-green-400' },
+  blue:   { bg: 'bg-blue-500/15',   text: 'text-blue-400' },
+  orange: { bg: 'bg-orange-500/15', text: 'text-orange-400' },
+  purple: { bg: 'bg-purple-500/15', text: 'text-purple-400' },
 }
 
 export function KpiCard({
-  label, value, sublabel, delta, deltaLabel, icon: Icon, color = 'gold', className
+  label, value, sublabel, delta, deltaLabel, deltaPositive = true,
+  icon: Icon, color = 'gold', className,
 }: KpiCardProps) {
-  const colors = COLOR_MAP[color]
-  const isPositive = delta !== undefined && delta > 0
-  const isNegative = delta !== undefined && delta < 0
-  const DeltaIcon = isPositive ? TrendingUp : isNegative ? TrendingDown : Minus
+  const c = COLOR_MAP[color]
 
   return (
-    <div className={cn('flex flex-col gap-2 rounded-xl p-4 border', className)}
-      style={{ backgroundColor: '#161B2E', borderColor: '#1E293B' }}>
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1.5">
-          <span className={cn('w-2 h-2 rounded-full', colors.dot)} />
-          <span className="text-xs font-medium text-gray-400 uppercase tracking-wide">
-            {label}
-          </span>
-        </div>
+    <div
+      className={cn('flex flex-col gap-3 rounded-xl p-5 border', className)}
+      style={{ backgroundColor: '#161B2E', borderColor: '#1E293B' }}
+    >
+      {/* Row 1: label + icon */}
+      <div className="flex items-start justify-between">
+        <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-widest leading-tight">
+          {label}
+        </span>
         {Icon && (
-          <div className={cn('w-8 h-8 rounded-lg flex items-center justify-center', colors.bg)}>
-            <Icon size={15} className={colors.text} />
+          <div className={cn('w-10 h-10 rounded-full flex items-center justify-center shrink-0', c.bg)}>
+            <Icon size={18} className={c.text} />
           </div>
         )}
       </div>
 
-      {/* Valor principal */}
-      <div>
-        <div className="text-3xl font-bold text-white tracking-tight leading-none">{value}</div>
-        {sublabel && (
-          <div className="text-sm text-gray-500 mt-1.5">{sublabel}</div>
-        )}
+      {/* Row 2: value */}
+      <div className="text-[2.25rem] font-bold text-white tracking-tight leading-none">
+        {value}
       </div>
 
-      {/* Delta */}
-      {delta !== undefined && (
-        <div className={cn(
-          'flex items-center gap-1 text-sm font-medium',
-          isPositive ? 'text-green-400' : isNegative ? 'text-red-400' : 'text-gray-500'
-        )}>
-          <DeltaIcon size={14} />
-          <span>
-            {isPositive ? '+' : ''}{delta.toFixed(1)}%
-            {deltaLabel && <span className="text-gray-600 font-normal ml-1">{deltaLabel}</span>}
+      {/* Row 3: sublabel or delta */}
+      {delta ? (
+        <div className="flex items-center gap-1.5 text-sm">
+          <span className={deltaPositive ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'}>
+            {delta}
           </span>
+          {deltaLabel && (
+            <span className="text-gray-500">{deltaLabel}</span>
+          )}
         </div>
-      )}
+      ) : sublabel ? (
+        <p className="text-sm text-gray-500 leading-tight">{sublabel}</p>
+      ) : null}
     </div>
   )
 }
