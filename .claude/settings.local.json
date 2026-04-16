@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(claude plugin:*)",
+      "Bash(npx tsc:*)",
+      "Bash(gh pr create --title 'feat: MMHIGHMETRIK ERP — full UI build' --body ':*)",
+      "Read(//c/Users/gabri/Downloads/**)",
+      "Bash(python3 -c ':*)",
+      "Bash(powershell -command 'Add-Type -AssemblyName PresentationCore; $reader = [System.IO.File]::ReadAllBytes\\('\\\\''C:/Users/gabri/Downloads/VALORIZACION N°1- AREQUIPA.pdf'\\\\''\\); Write-Host '\\\\''Size:'\\\\'' $reader.Length')",
+      "Read(//c/Users/gabri/AppData/Roaming/Claude/local-agent-mode-sessions/skills-plugin/96a71bc6-e12f-4f05-9e68-c1ff5b90b94e/302380b4-0750-4194-bf45-1d89bfbbc5cb/skills/xlsx/**)",
+      "Bash(py -3 -c ':*)",
+      "Bash(npm install:*)",
+      "Bash(node -e ':*)",
+      "Read(//c/Users/gabri/AppData/Roaming/Claude/local-agent-mode-sessions/skills-plugin/96a71bc6-e12f-4f05-9e68-c1ff5b90b94e/302380b4-0750-4194-bf45-1d89bfbbc5cb/skills/pdf/**)",
+      "Bash(python -c ':*)",
+      "Bash(pip install:*)",
+      "Bash(gh pr create --title 'feat: Cotizaciones — Excel import, split-view, delete, parser fixes' --body ':*)"
+    ]
+  }
+}

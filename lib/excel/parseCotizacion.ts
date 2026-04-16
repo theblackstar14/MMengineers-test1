@@ -44,8 +44,8 @@ export interface CotizacionParseada {
 const SUM_TOLERANCE = 1.0
 const SKIP_SHEETS = ['hoja1', 'portada', 'indice', 'resumen']
 
-// MUCHÍSIMO más flexible
-const ITEM_REGEX = /^\d+(\.\d+)*$/
+// Strict 2-digit groups: 01  01.01  01.01.01 — same as excelToERP.js
+const ITEM_REGEX = /^\d{2}(\.\d{2})*\.?$/
 
 // ────────────────────────────────────────────────────────────────
 // HELPERS
@@ -65,12 +65,6 @@ function cleanRows(raw: unknown[][]): string[][] {
     .filter(row => row.some(c => c !== ''))
 }
 
-// Detect indent visual (Excel spacing hack)
-function detectIndent(text: string): number {
-  if (!text) return 0
-  const spaces = text.match(/^\s+/)?.[0].length ?? 0
-  return Math.floor(spaces / 2)
-}
 
 // ────────────────────────────────────────────────────────────────
 // COLUMN DETECTION
@@ -122,7 +116,15 @@ interface NormalizedRow {
   precio_unitario: number | null
   parcial: number | null
   total: number | null
-  nivel_hint: number
+  nivel_hint: number // = codigo.split('.').length
+}
+
+// Summary/footer rows that should never be stored as partidas de obra
+const SUMMARY_DESC_RE = /^(de los costos|sub[\s-]?total|costo\s+directo|costo\s+total|condiciones\s+comerciales|de\s+nuestras|facilidades|imagen\s+referencial|igv|i\.g\.v|utilidad\s*\(|gastos\s+generales\s+y\s+utilidad)/i
+
+function isSummaryCode(codigo: string): boolean {
+  // XX.00 pattern — administrative grouping codes
+  return /^\d+\.00$/.test(codigo)
 }
 
 function normalizeRows(data: string[][], colMap: ColMap): NormalizedRow[] {
@@ -132,11 +134,14 @@ function normalizeRows(data: string[][], colMap: ColMap): NormalizedRow[] {
     const rawItem = colMap.item != null ? row[colMap.item] : ''
     const codigo = rawItem.trim().replace(/\.+$/, '')
 
-    // Skip rows without a valid numeric item code — avoids summary/footer text rows
+    // Skip rows without a valid numeric item code
     if (!ITEM_REGEX.test(codigo)) continue
 
     const descripcion = colMap.descripcion != null ? row[colMap.descripcion] : ''
     if (!descripcion) continue
+
+    // Skip summary/footer rows — not obra partidas
+    if (isSummaryCode(codigo) || SUMMARY_DESC_RE.test(descripcion.trim())) continue
 
     const nivel_hint = codigo.split('.').length
 
@@ -161,7 +166,7 @@ function normalizeRows(data: string[][], colMap: ColMap): NormalizedRow[] {
 
 function buildTree(items: NormalizedRow[]): PartidaTree[] {
   const root: PartidaTree[] = []
-  const stack: PartidaTree[] = []
+  const stack: Array<{ codigo: string; node: PartidaTree }> = []
 
   let orden = 0
 
@@ -180,19 +185,43 @@ function buildTree(items: NormalizedRow[]): PartidaTree[] {
       children: [],
     }
 
-    while (stack.length && stack[stack.length - 1].nivel >= node.nivel) {
+    const savedStack = [...stack]
+
+    // Strategy 1: exact prefix match (same as excelToERP.js)
+    while (stack.length) {
+      if (item.codigo.startsWith(stack[stack.length - 1].codigo + '.')) break
       stack.pop()
     }
 
-    if (stack.length === 0) {
-      root.push(node)
-    } else {
-      const parent = stack[stack.length - 1]
-      parent.children.push(node)
-      node.parent_codigo = parent.codigo
+    if (stack.length > 0) {
+      node.parent_codigo = stack[stack.length - 1].codigo
+      stack[stack.length - 1].node.children.push(node)
+      stack.push({ codigo: item.codigo, node })
+      continue
     }
 
-    stack.push(node)
+    // Strategy 2: mistyped code fallback — same logic as excelToERP.js
+    const firstSegNum = parseInt(item.codigo.split('.')[0], 10)
+    const lastRootNum = root.length > 0
+      ? parseInt(root[root.length - 1].codigo.split('.')[0], 10)
+      : 0
+
+    const isMistyped =
+      item.codigo.includes('.') &&
+      firstSegNum < lastRootNum &&
+      savedStack.length >= 2
+
+    if (isMistyped) {
+      const grandparent = savedStack[savedStack.length - 2]
+      node.parent_codigo = grandparent.codigo
+      grandparent.node.children.push(node)
+      stack.length = 0
+      for (const s of savedStack.slice(0, -1)) stack.push(s)
+      stack.push({ codigo: item.codigo, node })
+    } else {
+      root.push(node)
+      stack.push({ codigo: item.codigo, node })
+    }
   }
 
   return root

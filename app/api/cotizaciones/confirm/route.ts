@@ -50,22 +50,26 @@ export async function POST(req: NextRequest) {
           ? codigoToId.get(p.parent_codigo) ?? null
           : null
 
-        const { data: inserted } = await supabase
+        const { data: inserted, error: partErr } = await supabase
           .from('partidas')
           .insert({
             cotizacion_id: cot.id,
             parent_id,
             codigo: p.codigo,
-            nivel: p.nivel,
+            nivel: Math.min(p.nivel, 4) as 1 | 2 | 3 | 4,
             nombre: p.descripcion,
             unidad: p.unidad,
             metrado: p.metrado,
             precio_unitario: p.precio_unitario,
             total: p.parcial ?? p.total ?? 0,
+            total_adicional: 0,
+            total_valorizado: 0,
             orden: p.orden,
           })
           .select('id')
           .single()
+
+        if (partErr) console.error('partida insert error', p.codigo, partErr.message)
 
         if (inserted) {
           codigoToId.set(p.codigo, inserted.id)
@@ -75,8 +79,8 @@ export async function POST(req: NextRequest) {
       // Fallback: if total_sin_igv wasn't in Excel header, compute from root partidas
       if (!ver.total_sin_igv) {
         const rootTotal = ver.partidas_flat
-          .filter(p => p.parent_codigo === null)
-          .reduce((sum, p) => sum + (p.parcial ?? p.total ?? 0), 0)
+          .filter((p: PartidaFlat) => p.parent_codigo === null)
+          .reduce((sum: number, p: PartidaFlat) => sum + (p.parcial ?? p.total ?? 0), 0)
         if (rootTotal > 0) {
           await supabase.from('cotizaciones').update({ total: rootTotal }).eq('id', cot.id)
         }
