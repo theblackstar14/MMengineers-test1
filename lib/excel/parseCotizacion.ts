@@ -1,6 +1,8 @@
 import * as XLSX from 'xlsx'
 
-// ─── Types ────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────
+// TYPES
+// ────────────────────────────────────────────────────────────────
 
 export interface PartidaFlat {
   codigo: string
@@ -17,6 +19,7 @@ export interface PartidaFlat {
 
 export interface PartidaTree extends PartidaFlat {
   children: PartidaTree[]
+  _validation?: { expected: number; calculado: number; diferencia: number; ok: boolean }
 }
 
 export interface CotizacionParseada {
@@ -31,193 +34,340 @@ export interface CotizacionParseada {
   partidas_flat: PartidaFlat[]
   partidas_tree: PartidaTree[]
   warnings: string[]
+  validacion_ok: boolean
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────
+// CONFIG
+// ────────────────────────────────────────────────────────────────
 
-function toNum(v: unknown): number | null {
-  if (v == null) return null
-  const n = Number(v)
-  return isNaN(n) ? null : n
+const SUM_TOLERANCE = 1.0
+const SKIP_SHEETS = ['hoja1', 'portada', 'indice', 'resumen']
+
+// MUCHÍSIMO más flexible
+const ITEM_REGEX = /^\d+(\.\d+)*$/
+
+// ────────────────────────────────────────────────────────────────
+// HELPERS
+// ────────────────────────────────────────────────────────────────
+
+function parseNum(v: unknown): number | null {
+  if (v == null || v === '') return null
+  if (typeof v === 'number') return isNaN(v) ? null : v
+  const s = String(v).replace(/\s/g, '').replace(/,/g, '')
+  const n = parseFloat(s)
+  return isNaN(n) ? null : Math.round(n * 10000) / 10000
 }
 
-function toStr(v: unknown): string | null {
-  if (v == null) return null
-  const s = String(v).trim()
-  return s || null
+function cleanRows(raw: unknown[][]): string[][] {
+  return raw
+    .map(row => row.map(c => (c == null ? '' : String(c).trim())))
+    .filter(row => row.some(c => c !== ''))
 }
 
-function nivelFromCodigo(codigo: string): number {
-  return codigo.split('.').length
+// Detect indent visual (Excel spacing hack)
+function detectIndent(text: string): number {
+  if (!text) return 0
+  const spaces = text.match(/^\s+/)?.[0].length ?? 0
+  return Math.floor(spaces / 2)
 }
 
-function parentCodigo(codigo: string): string | null {
-  const parts = codigo.split('.')
-  if (parts.length <= 1) return null
-  return parts.slice(0, -1).join('.')
+// ────────────────────────────────────────────────────────────────
+// COLUMN DETECTION
+// ────────────────────────────────────────────────────────────────
+
+interface ColMap {
+  item?: number
+  descripcion?: number
+  unidad?: number
+  metrado?: number
+  precio?: number
+  parcial?: number
+  total?: number
 }
 
-function buildTree(flat: PartidaFlat[]): PartidaTree[] {
-  const map = new Map<string, PartidaTree>()
-  const roots: PartidaTree[] = []
-  for (const p of flat) map.set(p.codigo, { ...p, children: [] })
-  for (const p of flat) {
-    const node = map.get(p.codigo)!
-    if (p.parent_codigo && map.has(p.parent_codigo)) {
-      map.get(p.parent_codigo)!.children.push(node)
-    } else {
-      roots.push(node)
-    }
-  }
-  return roots
+function findHeaderRow(rows: string[][]): number {
+  return rows.findIndex(
+    row =>
+      row.some(c => c.toUpperCase().includes('ITEM')) &&
+      row.some(c => c.toUpperCase().includes('TOTAL')),
+  )
 }
 
-// Scan a row (array of unknowns) for a string value — returns column index or -1
-function findCol(row: unknown[], ...candidates: string[]): number {
-  for (let i = 0; i < row.length; i++) {
-    const v = toStr(row[i])
-    if (!v) continue
-    for (const c of candidates) {
-      if (v.toUpperCase().startsWith(c.toUpperCase())) return i
-    }
-  }
-  return -1
-}
+function mapColumns(header: string[]): ColMap {
+  const map: ColMap = {}
+  header.forEach((col, i) => {
+    const name = col.toUpperCase()
 
-// Find any cell matching value in entire row array
-function rowContains(row: unknown[], value: string): boolean {
-  return row.some(c => toStr(c)?.toUpperCase() === value.toUpperCase())
-}
-
-// ─── Parse single sheet ───────────────────────────────────────────
-
-function parseSheet(ws: XLSX.WorkSheet, sheetName: string): CotizacionParseada | null {
-  // Read as array of arrays — no defval so sparse is preserved
-  const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, {
-    header: 1,
-    defval: null,
-    blankrows: false,
+    if (name.includes('ITEM')) map.item = i
+    if (name.includes('DESCRIP')) map.descripcion = i
+    if (name.includes('UNID')) map.unidad = i
+    if (name.includes('MET') || name.includes('CANT')) map.metrado = i
+    if (name.includes('PRECIO') || name.includes('P.U')) map.precio = i
+    if (name.includes('PARCIAL')) map.parcial = i
+    if (name.includes('TOTAL')) map.total = i
   })
+  return map
+}
 
-  const warnings: string[] = []
+// ────────────────────────────────────────────────────────────────
+// NORMALIZE (🔥 CORE PRO)
+// ────────────────────────────────────────────────────────────────
 
-  // ── Step 1: find the ITEM header row ──────────────────────────
-  let dataStartRow = -1
-  let colItem = -1, colDesc = -1, colUnid = -1
-  let colMet = -1, colPrecio = -1, colParcial = -1, colTotal = -1
+interface NormalizedRow {
+  codigo: string
+  descripcion: string
+  unidad: string | null
+  metrado: number | null
+  precio_unitario: number | null
+  parcial: number | null
+  total: number | null
+  nivel_hint: number
+}
 
-  for (let i = 0; i < Math.min(rows.length, 25); i++) {
-    const row = rows[i]
-    if (!rowContains(row, 'ITEM')) continue
+function normalizeRows(data: string[][], colMap: ColMap): NormalizedRow[] {
+  const rows: NormalizedRow[] = []
 
-    // Found header row — map columns dynamically
-    colItem    = findCol(row, 'ITEM')
-    colDesc    = findCol(row, 'DESCRIPCION', 'DESCRIPCIÓN')
-    colUnid    = findCol(row, 'UNID')
-    colMet     = findCol(row, 'MET', 'METRADO')
-    colPrecio  = findCol(row, 'PRECIO')
-    colParcial = findCol(row, 'PARCIAL')
-    colTotal   = findCol(row, 'TOTAL')
-    dataStartRow = i + 1
-    break
-  }
+  for (const row of data) {
+    const rawItem = colMap.item != null ? row[colMap.item] : ''
+    const codigo = rawItem.trim().replace(/\.+$/, '')
 
-  if (dataStartRow === -1 || colItem === -1) return null // not a cotización sheet
+    // Skip rows without a valid numeric item code — avoids summary/footer text rows
+    if (!ITEM_REGEX.test(codigo)) continue
 
-  // ── Step 2: extract metadata from rows above header ───────────
-  let cliente: string | null = null
-  let proyecto: string | null = null
-  let plazo: string | null = null
-  let total_sin_igv: number | null = null
-  let version_label = 'REV.01'
-  let codigo_interno: string | null = null
-
-  for (let i = 0; i < dataStartRow; i++) {
-    const row = rows[i]
-    // Scan all cells for known labels
-    for (let j = 0; j < row.length - 1; j++) {
-      const label = toStr(row[j])?.toLowerCase() ?? ''
-      const val   = row[j + 1]
-      if (!label) continue
-      if (label.includes('proyecto')) proyecto = toStr(val) ?? proyecto
-      if (label.includes('cliente')) cliente = toStr(val) ?? cliente
-      if (label.includes('plazo')) plazo = toStr(val) ?? plazo
-      if (label.includes('precio sin igv') || label.includes('precio s/igv')) {
-        total_sin_igv = toNum(val) ?? total_sin_igv
-      }
-      const s = toStr(val)
-      if (s?.startsWith('REV')) version_label = s
-      if (s?.includes('COT-')) codigo_interno = s
-    }
-  }
-
-  // ── Step 3: parse partidas ────────────────────────────────────
-  const partidas_flat: PartidaFlat[] = []
-  const seenCodigos = new Map<string, number>()
-
-  for (let i = dataStartRow; i < rows.length; i++) {
-    const row = rows[i]
-    const rawCodigo = toStr(row[colItem])
-    if (!rawCodigo) continue
-    if (!/^\d/.test(rawCodigo)) continue // skip non-item rows
-
-    const descripcion = colDesc >= 0 ? toStr(row[colDesc]) : null
+    const descripcion = colMap.descripcion != null ? row[colMap.descripcion] : ''
     if (!descripcion) continue
 
-    // Deduplicate código
-    const baseCount = seenCodigos.get(rawCodigo) ?? 0
-    let codigo = rawCodigo
-    if (baseCount > 0) {
-      const suffix = String.fromCharCode(96 + baseCount) // a, b, c…
-      codigo = `${rawCodigo}${suffix}`
-      warnings.push(`Código duplicado "${rawCodigo}" → "${codigo}"`)
-    }
-    seenCodigos.set(rawCodigo, baseCount + 1)
+    const nivel_hint = codigo.split('.').length
 
-    const unidad         = colUnid    >= 0 ? toStr(row[colUnid])    : null
-    const metrado        = colMet     >= 0 ? toNum(row[colMet])     : null
-    const precio_unit    = colPrecio  >= 0 ? toNum(row[colPrecio])  : null
-    const parcial        = colParcial >= 0 ? toNum(row[colParcial]) : null
-    const total          = colTotal   >= 0 ? toNum(row[colTotal])   : null
-
-    partidas_flat.push({
+    rows.push({
       codigo,
       descripcion,
-      nivel: nivelFromCodigo(rawCodigo),
-      unidad,
-      metrado,
-      precio_unitario: precio_unit,
-      parcial,
-      total,
-      parent_codigo: parentCodigo(rawCodigo),
-      orden: partidas_flat.length,
+      unidad: colMap.unidad != null ? row[colMap.unidad] || null : null,
+      metrado: colMap.metrado != null ? parseNum(row[colMap.metrado]) : null,
+      precio_unitario: colMap.precio != null ? parseNum(row[colMap.precio]) : null,
+      parcial: colMap.parcial != null ? parseNum(row[colMap.parcial]) : null,
+      total: colMap.total != null ? parseNum(row[colMap.total]) : null,
+      nivel_hint,
     })
   }
 
-  if (partidas_flat.length === 0) return null
+  return rows
+}
 
-  return {
-    sheet_name: sheetName,
-    version_label,
-    codigo_interno,
-    cliente,
-    proyecto,
-    fecha: null,
-    plazo,
-    total_sin_igv,
-    partidas_flat,
-    partidas_tree: buildTree(partidas_flat),
-    warnings,
+// ────────────────────────────────────────────────────────────────
+// TREE BUILDER (🔥 INTELIGENTE)
+// ────────────────────────────────────────────────────────────────
+
+function buildTree(items: NormalizedRow[]): PartidaTree[] {
+  const root: PartidaTree[] = []
+  const stack: PartidaTree[] = []
+
+  let orden = 0
+
+  for (const item of items) {
+    const node: PartidaTree = {
+      codigo: item.codigo,
+      descripcion: item.descripcion,
+      nivel: item.nivel_hint,
+      unidad: item.unidad,
+      metrado: item.metrado,
+      precio_unitario: item.precio_unitario,
+      parcial: item.parcial,
+      total: item.total,
+      parent_codigo: null,
+      orden: orden++,
+      children: [],
+    }
+
+    while (stack.length && stack[stack.length - 1].nivel >= node.nivel) {
+      stack.pop()
+    }
+
+    if (stack.length === 0) {
+      root.push(node)
+    } else {
+      const parent = stack[stack.length - 1]
+      parent.children.push(node)
+      node.parent_codigo = parent.codigo
+    }
+
+    stack.push(node)
+  }
+
+  return root
+}
+
+// ────────────────────────────────────────────────────────────────
+// FLATTEN
+// ────────────────────────────────────────────────────────────────
+
+function flattenTree(nodes: PartidaTree[], out: PartidaFlat[] = []): PartidaFlat[] {
+  for (const n of nodes) {
+    out.push({
+      codigo: n.codigo,
+      descripcion: n.descripcion,
+      nivel: n.nivel,
+      unidad: n.unidad,
+      metrado: n.metrado,
+      precio_unitario: n.precio_unitario,
+      parcial: n.parcial,
+      total: n.total,
+      parent_codigo: n.parent_codigo,
+      orden: n.orden,
+    })
+    flattenTree(n.children, out)
+  }
+  return out
+}
+
+// ────────────────────────────────────────────────────────────────
+// VALIDATION
+// ────────────────────────────────────────────────────────────────
+
+function validateTree(nodes: PartidaTree[]): void {
+  for (const node of nodes) {
+    if (node.children.length > 0) {
+      validateTree(node.children)
+
+      if (node.total != null) {
+        const sum = node.children.reduce(
+          (acc, c) => acc + (c.parcial ?? c.total ?? 0),
+          0,
+        )
+
+        const diff = Math.abs(sum - node.total)
+
+        node._validation = {
+          expected: node.total,
+          calculado: Math.round(sum * 100) / 100,
+          diferencia: Math.round(diff * 100) / 100,
+          ok: diff <= SUM_TOLERANCE,
+        }
+      }
+    }
   }
 }
 
-// ─── Public API ───────────────────────────────────────────────────
+function checkAllValid(nodes: PartidaTree[]): boolean {
+  return nodes.every(
+    n => (!n._validation || n._validation.ok) && checkAllValid(n.children),
+  )
+}
+
+// ────────────────────────────────────────────────────────────────
+// METADATA EXTRACTION
+// ────────────────────────────────────────────────────────────────
+
+interface SheetMeta {
+  proyecto: string | null
+  cliente: string | null
+  fecha: string | null
+  plazo: string | null
+  total_sin_igv: number | null
+  version_label: string
+  codigo_interno: string | null
+}
+
+function extractPrecioSinIGV(text: string): number | null {
+  const raw = text.replace(/^s\/\.?\s*/i, '').replace(/\s/g, '').replace(/,/g, '')
+  const n = parseFloat(raw)
+  return isNaN(n) || n <= 0 ? null : n
+}
+
+function extractMeta(rows: string[][], headerIdx: number): SheetMeta {
+  const meta: SheetMeta = {
+    proyecto: null, cliente: null, fecha: null, plazo: null,
+    total_sin_igv: null, version_label: 'REV.01', codigo_interno: null,
+  }
+
+  for (let i = 0; i < headerIdx; i++) {
+    const row = rows[i]
+
+    for (let j = 0; j < row.length; j++) {
+      const cell = row[j]
+      const cellLow = cell.toLowerCase()
+
+      // Embedded multi-line cell: "Precio sin IGV S/ 1,185,390.50"
+      if (meta.total_sin_igv == null) {
+        const m = cell.match(/precio\s+s(?:in\s+igv|\/\.?igv)[^\d]*([\d,.\s]+)/i)
+        if (m) meta.total_sin_igv = extractPrecioSinIGV(m[1]) ?? meta.total_sin_igv
+      }
+
+      // Standard label | value pairs
+      if (j < row.length - 1) {
+        const val = row[j + 1]
+        if (cellLow.includes('proyecto')) meta.proyecto = val || meta.proyecto
+        if (cellLow.includes('cliente'))  meta.cliente  = val || meta.cliente
+        if (cellLow.includes('fecha'))    meta.fecha    = val || meta.fecha
+        if (cellLow.includes('plazo'))    meta.plazo    = val || meta.plazo
+        if (cellLow.includes('precio sin igv') || cellLow.includes('precio s/igv')) {
+          meta.total_sin_igv = extractPrecioSinIGV(val) ?? meta.total_sin_igv
+        }
+        if (val?.startsWith('REV'))  meta.version_label  = val
+        if (val?.includes('COT-'))   meta.codigo_interno = val
+      }
+    }
+  }
+
+  return meta
+}
+
+// ────────────────────────────────────────────────────────────────
+// PARSER
+// ────────────────────────────────────────────────────────────────
+
+function parseSheet(ws: XLSX.WorkSheet, sheetName: string): CotizacionParseada | null {
+  const rawRows = XLSX.utils.sheet_to_json<unknown[]>(ws, {
+    header: 1,
+    defval: '',
+    blankrows: false,
+  })
+
+  const rows = cleanRows(rawRows as unknown[][])
+
+  const headerIdx = findHeaderRow(rows)
+  if (headerIdx === -1) return null
+
+  const colMap = mapColumns(rows[headerIdx])
+
+  const data = rows.slice(headerIdx + 1)
+  const items = normalizeRows(data, colMap)
+
+  if (items.length === 0) return null
+
+  const tree = buildTree(items)
+  validateTree(tree)
+
+  const meta = extractMeta(rows, headerIdx)
+
+  return {
+    sheet_name:     sheetName,
+    version_label:  meta.version_label,
+    codigo_interno: meta.codigo_interno,
+    cliente:        meta.cliente,
+    proyecto:       meta.proyecto,
+    fecha:          meta.fecha,
+    plazo:          meta.plazo,
+    total_sin_igv:  meta.total_sin_igv,
+    partidas_flat:  flattenTree(tree),
+    partidas_tree:  tree,
+    warnings:       [],
+    validacion_ok:  checkAllValid(tree),
+  }
+}
+
+// ────────────────────────────────────────────────────────────────
+// PUBLIC API
+// ────────────────────────────────────────────────────────────────
 
 export function parseExcelCotizaciones(buffer: ArrayBuffer): CotizacionParseada[] {
   const wb = XLSX.read(buffer, { type: 'array' })
   const results: CotizacionParseada[] = []
 
   for (const sheetName of wb.SheetNames) {
+    if (SKIP_SHEETS.includes(sheetName.toLowerCase())) continue
+
     const ws = wb.Sheets[sheetName]
     if (!ws || !ws['!ref']) continue
 

@@ -4,35 +4,25 @@ import type { PartidaFlat } from '@/lib/excel/parseCotizacion'
 
 export const runtime = 'nodejs'
 
-interface ConfirmBody {
-  proyecto_id: string
-  versiones: Array<{
-    sheet_name: string
-    version_label: string
-    codigo_interno: string | null
-    cliente: string | null
-    proyecto: string | null
-    total_sin_igv: number | null
-    partidas_flat: PartidaFlat[]
-  }>
-}
-
 export async function POST(req: NextRequest) {
   try {
-    const body: ConfirmBody = await req.json()
+    const body = await req.json()
     const { proyecto_id, versiones } = body
 
     if (!proyecto_id || !versiones?.length) {
-      return NextResponse.json({ error: 'proyecto_id y versiones requeridos' }, { status: 400 })
+      return NextResponse.json(
+        { error: 'proyecto_id y versiones requeridos' },
+        { status: 400 }
+      )
     }
 
     const supabase = await createClient()
-    const created: Array<{ cotizacion_id: string; nombre: string; partidas: number }> = []
+
+    const created = []
 
     for (let v = 0; v < versiones.length; v++) {
       const ver = versiones[v]
 
-      // 1. Insert cotización
       const { data: cot, error: cotError } = await supabase
         .from('cotizaciones')
         .insert({
@@ -49,60 +39,56 @@ export async function POST(req: NextRequest) {
         .single()
 
       if (cotError || !cot) {
-        return NextResponse.json(
-          { error: `Error al crear cotización "${ver.sheet_name}": ${cotError?.message}` },
-          { status: 500 },
-        )
+        console.error(cotError)
+        return NextResponse.json({ error: 'Error creando cotización' }, { status: 500 })
       }
 
-      const cotizacion_id = cot.id
-
-      // 2. Build codigo → id map for parent resolution
       const codigoToId = new Map<string, string>()
 
-      // Insert partidas in order (parents before children — already ordered by flat list)
-      for (const partida of ver.partidas_flat) {
-        const parent_id = partida.parent_codigo
-          ? (codigoToId.get(partida.parent_codigo) ?? null)
+      for (const p of ver.partidas_flat) {
+        const parent_id = p.parent_codigo
+          ? codigoToId.get(p.parent_codigo) ?? null
           : null
 
-        const { data: inserted, error: partErr } = await supabase
+        const { data: inserted } = await supabase
           .from('partidas')
           .insert({
-            cotizacion_id,
+            cotizacion_id: cot.id,
             parent_id,
-            codigo: partida.codigo,
-            nivel: Math.min(partida.nivel, 4) as 1 | 2 | 3 | 4,
-            nombre: partida.descripcion,
-            unidad: partida.unidad,
-            metrado: partida.metrado,
-            precio_unitario: partida.precio_unitario,
-            total: partida.parcial ?? partida.total ?? 0,
-            total_adicional: 0,
-            total_valorizado: 0,
-            orden: partida.orden,
+            codigo: p.codigo,
+            nivel: p.nivel,
+            nombre: p.descripcion,
+            unidad: p.unidad,
+            metrado: p.metrado,
+            precio_unitario: p.precio_unitario,
+            total: p.parcial ?? p.total ?? 0,
+            orden: p.orden,
           })
           .select('id')
           .single()
 
-        if (partErr || !inserted) {
-          console.error('Error partida', partida.codigo, partErr?.message)
-          continue
+        if (inserted) {
+          codigoToId.set(p.codigo, inserted.id)
         }
-
-        codigoToId.set(partida.codigo, inserted.id)
       }
 
-      created.push({
-        cotizacion_id,
-        nombre: ver.sheet_name,
-        partidas: ver.partidas_flat.length,
-      })
+      // Fallback: if total_sin_igv wasn't in Excel header, compute from root partidas
+      if (!ver.total_sin_igv) {
+        const rootTotal = ver.partidas_flat
+          .filter(p => p.parent_codigo === null)
+          .reduce((sum, p) => sum + (p.parcial ?? p.total ?? 0), 0)
+        if (rootTotal > 0) {
+          await supabase.from('cotizaciones').update({ total: rootTotal }).eq('id', cot.id)
+        }
+      }
+
+      created.push({ id: cot.id })
     }
 
     return NextResponse.json({ ok: true, created })
+
   } catch (err) {
-    console.error('[confirm/cotizacion]', err)
+    console.error('[confirm ERROR]', err)
     return NextResponse.json({ error: 'Error interno' }, { status: 500 })
   }
 }
