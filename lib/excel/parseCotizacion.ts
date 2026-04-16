@@ -119,31 +119,49 @@ interface NormalizedRow {
   nivel_hint: number // = codigo.split('.').length
 }
 
-// Summary/footer rows that should never be stored as partidas de obra
-const SUMMARY_DESC_RE = /^(de los costos|sub[\s-]?total|costo\s+directo|costo\s+total|condiciones\s+comerciales|de\s+nuestras|facilidades|imagen\s+referencial|igv|i\.g\.v|utilidad\s*\(|gastos\s+generales\s+y\s+utilidad)/i
+// Summary/footer rows — never stored as partidas de obra
+const SUMMARY_DESC_RE = /^(de los costos|sub[\s-]?total|costo\s+directo|costo\s+total|condiciones\s+comerciales|de\s+nuestras|facilidades|imagen\s+referencial|igv|i\.g\.v|utilidad\s*\(|gastos\s+generales\s+y\s+utilidad|cronograma)/i
+
+// Condition/notes rows start with * or ** (bullet-point clauses)
+const CONDITION_ROW_RE = /^\*+/
 
 function isSummaryCode(codigo: string): boolean {
-  // XX.00 pattern — administrative grouping codes
   return /^\d+\.00$/.test(codigo)
+}
+
+function deduplicateCodigo(codigo: string, seen: Map<string, number>): string {
+  const count = seen.get(codigo) ?? 0
+  seen.set(codigo, count + 1)
+  if (count === 0) return codigo
+  // 1st duplicate → 'a', 2nd → 'b', etc.
+  return `${codigo}${String.fromCharCode(96 + count)}`
 }
 
 function normalizeRows(data: string[][], colMap: ColMap): NormalizedRow[] {
   const rows: NormalizedRow[] = []
+  const seenCodigos = new Map<string, number>()
 
   for (const row of data) {
     const rawItem = colMap.item != null ? row[colMap.item] : ''
-    const codigo = rawItem.trim().replace(/\.+$/, '')
+    const rawCodigo = rawItem.trim().replace(/\.+$/, '')
 
     // Skip rows without a valid numeric item code
-    if (!ITEM_REGEX.test(codigo)) continue
+    if (!ITEM_REGEX.test(rawCodigo)) continue
 
     const descripcion = colMap.descripcion != null ? row[colMap.descripcion] : ''
     if (!descripcion) continue
 
-    // Skip summary/footer rows — not obra partidas
-    if (isSummaryCode(codigo) || SUMMARY_DESC_RE.test(descripcion.trim())) continue
+    // Skip summary/footer and condition rows
+    if (
+      isSummaryCode(rawCodigo) ||
+      SUMMARY_DESC_RE.test(descripcion.trim()) ||
+      CONDITION_ROW_RE.test(descripcion.trim())
+    ) continue
 
-    const nivel_hint = codigo.split('.').length
+    // Deduplicate: 01.12 → 01.12, 01.12a, 01.12b
+    const codigo = deduplicateCodigo(rawCodigo, seenCodigos)
+
+    const nivel_hint = rawCodigo.split('.').length
 
     rows.push({
       codigo,
