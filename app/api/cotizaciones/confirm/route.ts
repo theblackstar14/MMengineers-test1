@@ -30,10 +30,18 @@ export async function POST(req: NextRequest) {
           nombre: ver.sheet_name,
           version: v + 1,
           estado: 'borrador',
-          total: ver.total_sin_igv ?? 0,
-          notas: ver.version_label
-            ? `${ver.version_label}${ver.codigo_interno ? ' · ' + ver.codigo_interno : ''}`
-            : null,
+          total: ver.resumen?.total ?? ver.total_sin_igv ?? 0,
+          notas: JSON.stringify({
+            version_label:  ver.version_label  ?? 'REV.01',
+            codigo_interno: ver.codigo_interno ?? null,
+            resumen: ver.resumen
+              ? {
+                  gg_pct:   ver.resumen.gastos_generales_pct,
+                  util_pct: ver.resumen.utilidad_pct,
+                  igv_pct:  ver.resumen.igv_pct,
+                }
+              : null,
+          }),
         })
         .select('id')
         .single()
@@ -61,7 +69,7 @@ export async function POST(req: NextRequest) {
             unidad: p.unidad,
             metrado: p.metrado,
             precio_unitario: p.precio_unitario,
-            total: p.parcial ?? p.total ?? 0,
+            total: p.total ?? p.parcial ?? 0,
             total_adicional: 0,
             total_valorizado: 0,
             orden: p.orden,
@@ -76,15 +84,8 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Fallback: if total_sin_igv wasn't in Excel header, compute from root partidas
-      if (!ver.total_sin_igv) {
-        const rootTotal = ver.partidas_flat
-          .filter((p: PartidaFlat) => p.parent_codigo === null)
-          .reduce((sum: number, p: PartidaFlat) => sum + (p.parcial ?? p.total ?? 0), 0)
-        if (rootTotal > 0) {
-          await supabase.from('cotizaciones').update({ total: rootTotal }).eq('id', cot.id)
-        }
-      }
+      // Recompute totals after all partidas inserted (trigger only fires on nivel=4)
+      await supabase.rpc('recalcular_totales_partidas', { p_cotizacion_id: cot.id })
 
       created.push({ id: cot.id })
     }

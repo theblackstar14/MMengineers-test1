@@ -26,7 +26,11 @@ export function ProyectoTabs({ proyectoId, tabActivo }: Props) {
         return (
           <Link
             key={tab.key}
-            href={`/proyectos/${proyectoId}?tab=${tab.key}`}
+            href={
+              tab.key === 'cotizacion' ? `/proyectos/${proyectoId}/cotizaciones`
+              : tab.key === 'progreso' ? `/proyectos/${proyectoId}/progreso`
+              : `/proyectos/${proyectoId}?tab=${tab.key}`
+            }
             className={cn(
               'px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap',
               isActive
