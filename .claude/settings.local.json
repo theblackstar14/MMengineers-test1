@@ -14,7 +14,14 @@
       "Read(//c/Users/gabri/AppData/Roaming/Claude/local-agent-mode-sessions/skills-plugin/96a71bc6-e12f-4f05-9e68-c1ff5b90b94e/302380b4-0750-4194-bf45-1d89bfbbc5cb/skills/pdf/**)",
       "Bash(python -c ':*)",
       "Bash(pip install:*)",
-      "Bash(gh pr create --title 'feat: Cotizaciones — Excel import, split-view, delete, parser fixes' --body ':*)"
+      "Bash(gh pr create --title 'feat: Cotizaciones — Excel import, split-view, delete, parser fixes' --body ':*)",
+      "Bash(node -e \"require\\('@anthropic-ai/sdk'\\); console.log\\('ok'\\)\")",
+      "mcp__1b4b68dc-810c-485d-939d-b2c23b10e132__list_projects",
+      "mcp__1b4b68dc-810c-485d-939d-b2c23b10e132__execute_sql",
+      "Bash(npm view:*)",
+      "Bash(npm search:*)",
+      "Bash(npm uninstall:*)",
+      "mcp__1b4b68dc-810c-485d-939d-b2c23b10e132__apply_migration"
     ]
   }
 }
