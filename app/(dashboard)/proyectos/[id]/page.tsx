@@ -135,6 +135,9 @@ export default async function ProyectoDetallePage({ params, searchParams }: Page
             equipo={equipo as Parameters<typeof ResumenTab>[0]['equipo']}
             garantias={garantias}
             documentos={documentos}
+            costoReal={movimientos
+              .filter(m => m.tipo === 'egreso' && m.estado !== 'anulado')
+              .reduce((s, m) => s + (m.monto_bruto ?? 0), 0)}
           />
         )}
 

@@ -1,15 +1,16 @@
 'use client'
 
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
-  ChevronLeft, Upload, Loader2, Search, Trash2, FileText,
+  ChevronLeft, Upload, Loader2, Search, Trash2,
   RefreshCw, Calendar, AlertTriangle, TrendingUp, Zap, Eye,
   Maximize2, Image as ImageIcon, ChevronsDownUp, ChevronsUpDown,
 } from 'lucide-react'
 import dynamic from 'next/dynamic'
 import type { CronogramaDB, TareaDB, RelacionDB } from '@/lib/queries/progreso'
 import type { GanttHandle } from './GanttChart'
+import { TareaDetailPanel } from './TareaDetailPanel'
 
 const GanttChart = dynamic(
   () => import('./GanttChart').then(m => m.GanttChart),
@@ -58,6 +59,8 @@ export function VisorProgreso({ proyectoId, proyectoNombre, initial }: Props) {
   const [stageMsg, setStageMsg]     = useState('')
   const [dragging, setDragging]     = useState(false)
 
+  const [valorizado, setValorizado] = useState<{ valorizado: number; total_contratado: number; linked_count: number; total_tareas: number; pct: number } | null>(null)
+
   const [zoom, setZoom]             = useState<Zoom>('week')
   const [showCritical, setCritical] = useState(true)
   const [showBaseline, setBaseline] = useState(false)
@@ -66,6 +69,15 @@ export function VisorProgreso({ proyectoId, proyectoNombre, initial }: Props) {
 
   const ganttHandleRef = useRef<GanttHandle | null>(null)
   const [exporting, setExporting] = useState(false)
+
+  // Fetch valorizado agregado on mount + cuando cambian tareas/partidas
+  const refreshValorizado = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/progreso/${proyectoId}/valorizado`)
+      if (r.ok) setValorizado(await r.json())
+    } catch { /* noop */ }
+  }, [proyectoId])
+  useEffect(() => { if (tareas.length) refreshValorizado() }, [refreshValorizado, tareas.length])
 
   const onGanttReady = useCallback((h: GanttHandle) => { ganttHandleRef.current = h }, [])
 
@@ -391,6 +403,25 @@ export function VisorProgreso({ proyectoId, proyectoNombre, initial }: Props) {
                     <div className="text-[16px] font-bold text-[#a5b4fc]">{relaciones.length}</div>
                   </div>
                 </div>
+
+                {/* Valorizado agregado */}
+                {valorizado && valorizado.total_contratado > 0 && (
+                  <div className="rounded p-3 border" style={{ borderColor: '#06b6d4', background: 'rgba(6,182,212,0.08)' }}>
+                    <div className="text-[10px] text-[#67e8f9] uppercase tracking-wider mb-1">Valorizado</div>
+                    <div className="text-[16px] font-bold text-[#06b6d4]">
+                      S/ {valorizado.valorizado.toLocaleString('es-PE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                    </div>
+                    <div className="text-[9px] text-[#8892a4]">
+                      de S/ {valorizado.total_contratado.toLocaleString('es-PE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                    </div>
+                    <div className="mt-1 h-1 rounded overflow-hidden" style={{ background: '#0f1117' }}>
+                      <div className="h-full bg-gradient-to-r from-[#06b6d4] to-[#22d3ee]" style={{ width: `${Math.min(100, valorizado.pct)}%` }} />
+                    </div>
+                    <div className="mt-1 text-[9px] text-[#8892a4]">
+                      {valorizado.linked_count}/{valorizado.total_tareas} tareas vinculadas
+                    </div>
+                  </div>
+                )}
               </>
             )}
 
@@ -439,40 +470,20 @@ export function VisorProgreso({ proyectoId, proyectoNombre, initial }: Props) {
 
           {/* Right: task detail panel */}
           {selectedTask && (
-            <aside className="w-[320px] shrink-0 border-l overflow-y-auto"
-              style={{ borderColor: '#2e3352', background: '#12151e' }}>
-              <div className="sticky top-0 flex items-center justify-between p-3 border-b"
-                style={{ borderColor: '#2e3352', background: '#1a1d27' }}>
-                <div className="flex items-center gap-2">
-                  <FileText size={14} color="#818cf8" />
-                  <span className="text-[11px] font-semibold text-[#a5b4fc] uppercase tracking-wider">Detalle</span>
-                </div>
-                <button onClick={() => setSelected(null)} className="text-[#8892a4] hover:text-white">✕</button>
-              </div>
-              <div className="p-4 flex flex-col gap-3">
-                <div>
-                  <div className="text-[10px] text-[#8892a4] uppercase tracking-wider mb-1">{selectedTask.outline_number || selectedTask.wbs || '—'}</div>
-                  <div className="text-[14px] font-semibold text-white">{selectedTask.nombre}</div>
-                </div>
-                <Field label="Inicio" value={fmtDate(selectedTask.start_date)} />
-                <Field label="Fin" value={fmtDate(selectedTask.end_date)} />
-                <Field label="Duración" value={selectedTask.duration_days != null ? `${selectedTask.duration_days} días` : '—'} />
-                <Field label="Avance" value={`${Math.round(selectedTask.percent_complete ?? 0)}%`} />
-                {selectedTask.is_milestone && <Tag color="#f59e0b" text="Hito" />}
-                {selectedTask.is_critical  && <Tag color="#ef4444" text="Ruta crítica" />}
-                {selectedTask.is_summary   && <Tag color="#64748b" text="Resumen" />}
-                {selectedTask.responsable  && <Field label="Responsable" value={selectedTask.responsable} />}
-                {selectedTask.costo_plan != null && <Field label="Costo plan" value={`S/ ${selectedTask.costo_plan.toLocaleString('es-PE', { minimumFractionDigits: 2 })}`} />}
-                {selectedTask.notas && (
-                  <div>
-                    <div className="text-[10px] text-[#8892a4] uppercase tracking-wider mb-1">Notas</div>
-                    <div className="text-[11px] text-[#c7d2fe] whitespace-pre-wrap p-2 rounded border" style={{ borderColor: '#2e3352', background: '#0f1117' }}>
-                      {selectedTask.notas}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </aside>
+            <TareaDetailPanel
+              tarea={selectedTask}
+              proyectoId={proyectoId}
+              onClose={() => setSelected(null)}
+              onAvanceChanged={(tareaId, pct) => {
+                setTareas(prev => prev.map(t => t.id === tareaId ? { ...t, percent_complete: pct } : t))
+                setSelected(s => s && s.id === tareaId ? { ...s, percent_complete: pct } : s)
+                refreshValorizado()
+              }}
+              onPartidaChanged={(tareaId, partidaId) => {
+                setTareas(prev => prev.map(t => t.id === tareaId ? { ...t, partida_id: partidaId } : t))
+                refreshValorizado()
+              }}
+            />
           )}
         </div>
       )}
@@ -480,27 +491,3 @@ export function VisorProgreso({ proyectoId, proyectoNombre, initial }: Props) {
   )
 }
 
-function Field({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <div className="text-[10px] text-[#8892a4] uppercase tracking-wider mb-0.5">{label}</div>
-      <div className="text-[12px] text-[#e2e8f0]">{value}</div>
-    </div>
-  )
-}
-
-function Tag({ color, text }: { color: string; text: string }) {
-  return (
-    <span className="inline-block text-[10px] px-2 py-0.5 rounded-full font-semibold"
-      style={{ color, background: `${color}22`, border: `1px solid ${color}55`, width: 'fit-content' }}>
-      {text}
-    </span>
-  )
-}
-
-function fmtDate(s: string | null): string {
-  if (!s) return '—'
-  const d = new Date(s)
-  if (isNaN(d.getTime())) return '—'
-  return d.toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' })
-}

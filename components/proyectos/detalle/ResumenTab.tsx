@@ -24,6 +24,7 @@ interface Props {
   equipo: Array<{ id: string; rol_en_proyecto: string; perfil: { nombre: string; apellido: string; cargo: string | null } | null }>
   garantias: Garantia[]
   documentos: Array<{ id: string; nombre: string; tipo_documento: string | null; created_at: string; url?: string }>
+  costoReal?: number
 }
 
 const HITO_ICON = {
@@ -33,11 +34,11 @@ const HITO_ICON = {
   retrasado: <AlertTriangle size={15} className="text-red-400 shrink-0" />,
 }
 
-export function ResumenTab({ proyecto: p, hitos, curvaS, equipo, garantias, documentos }: Props) {
+export function ResumenTab({ proyecto: p, hitos, curvaS, equipo, garantias, documentos, costoReal = 0 }: Props) {
   const hitosCompletados = hitos.filter(h => h.estado === 'completado').length
   const ingresoTotal = p.monto_valorizado ?? 0
-  const costoEstimado = (p.monto_contrato + p.monto_adicionales) * (p.avance_financiero_pct / 100)
-  const utilidad = ingresoTotal - costoEstimado
+  // Margen real = (valorizado - costos reales desde movimientos) / valorizado
+  const utilidad = ingresoTotal - costoReal
   const margen = ingresoTotal > 0 ? (utilidad / ingresoTotal) * 100 : 0
 
   return (

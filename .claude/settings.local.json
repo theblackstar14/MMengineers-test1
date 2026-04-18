@@ -21,7 +21,11 @@
       "Bash(npm view:*)",
       "Bash(npm search:*)",
       "Bash(npm uninstall:*)",
-      "mcp__1b4b68dc-810c-485d-939d-b2c23b10e132__apply_migration"
+      "mcp__1b4b68dc-810c-485d-939d-b2c23b10e132__apply_migration",
+      "Bash(gh pr create --base master --title 'feat: progreso gantt viewer + cotizaciones DB-sync' --body ' *)",
+      "Bash(where gh.exe)",
+      "Bash(\"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" --version)",
+      "mcp__1b4b68dc-810c-485d-939d-b2c23b10e132__list_tables"
     ]
   }
 }
