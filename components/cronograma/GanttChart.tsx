@@ -45,51 +45,75 @@ export function GanttChart({
       expandAll: () => {
         const g = ganttRef.current
         if (!g) return
-        g.eachTask((t: { id: string | number }) => g.open(t.id))
+        g.batchUpdate(() => {
+          g.eachTask((t: { id: string | number }) => g.open(t.id))
+        })
       },
       collapseAll: () => {
         const g = ganttRef.current
         if (!g) return
-        g.eachTask((t: { id: string | number; parent: string | number }) => {
-          if (t.parent && t.parent !== 0) g.close(t.parent)
+        g.batchUpdate(() => {
+          // close only top-level summaries — closing nested parents is redundant
+          g.eachTask((t: { id: string | number; $level: number }) => {
+            if (t.$level === 0) g.close(t.id)
+          })
         })
       },
       exportPng: async (filename = 'gantt.png') => {
         const node = containerRef.current
         if (!node) return
-        const { default: html2canvas } = await import('html2canvas')
+        const { toPng } = await import('html-to-image')
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const gantt: any = ganttRef.current
-        const originalAutosize = gantt?.config?.autosize
+        if (!gantt) return
+
+        const prevAutosize       = gantt.config.autosize
+        const prevSmartRendering = gantt.config.smart_rendering
+        const prevSmartScales    = gantt.config.smart_scales
+        const prevNodeHeight     = node.style.height
+        const prevNodeWidth      = node.style.width
+        const prevParentOverflow = node.parentElement?.style.overflow
+
+        // Yield so spinner paints before heavy work
+        const yieldUI = () => new Promise(r => setTimeout(r, 0))
+
         try {
-          if (gantt) {
-            gantt.config.autosize = 'xy'
-            gantt.render()
-            await new Promise(r => setTimeout(r, 250))
-          }
-          const canvas = await html2canvas(node, {
+          gantt.config.smart_rendering = false
+          gantt.config.smart_scales    = false
+          gantt.config.autosize        = 'xy'
+          if (node.parentElement) node.parentElement.style.overflow = 'visible'
+          gantt.render()
+          await yieldUI()
+          await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))
+
+          const fullW = Math.max(node.scrollWidth,  node.offsetWidth)
+          const fullH = Math.max(node.scrollHeight, node.offsetHeight)
+          node.style.width  = `${fullW}px`
+          node.style.height = `${fullH}px`
+          gantt.render()
+          await yieldUI()
+
+          const dataUrl = await toPng(node, {
             backgroundColor: '#0f1117',
-            scale: 2,
-            useCORS: true,
-            allowTaint: false,
-            width:  node.scrollWidth,
-            height: node.scrollHeight,
-            windowWidth:  node.scrollWidth,
-            windowHeight: node.scrollHeight,
+            pixelRatio: 1.5,
+            cacheBust: true,
+            width:  fullW,
+            height: fullH,
+            skipFonts: true,
           })
-          canvas.toBlob(blob => {
-            if (!blob) return
-            const url = URL.createObjectURL(blob)
-            const a = document.createElement('a')
-            a.href = url; a.download = filename
-            document.body.appendChild(a); a.click(); a.remove()
-            URL.revokeObjectURL(url)
-          }, 'image/png')
+          const a = document.createElement('a')
+          a.href = dataUrl; a.download = filename
+          document.body.appendChild(a); a.click(); a.remove()
         } finally {
-          if (gantt) {
-            gantt.config.autosize = originalAutosize
-            gantt.render()
+          gantt.config.smart_rendering = prevSmartRendering
+          gantt.config.smart_scales    = prevSmartScales
+          gantt.config.autosize        = prevAutosize
+          node.style.height = prevNodeHeight
+          node.style.width  = prevNodeWidth
+          if (node.parentElement && prevParentOverflow !== undefined) {
+            node.parentElement.style.overflow = prevParentOverflow
           }
+          gantt.render()
         }
       },
       toggleFullscreen: () => {
